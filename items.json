@@ -1,5 +1,4 @@
 [
-  {"product": "Example headphones", "shop": "Shop A", "url": "https://example.com/product/123"},
-  {"product": "Example headphones", "shop": "Shop B", "url": "https://example.org/p/456",
-   "selector": ".price-now", "was_selector": ".price-was"}
+  {"product": "Hisense 540L PureFlat Side By Side Fridge - Silver", "shop": "Harvey Norman",
+   "url": "https://www.harveynorman.com.au/hisense-540l-pureflat-side-by-side-fridge-silver.html"}
 ]

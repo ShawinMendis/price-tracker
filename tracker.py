@@ -16,12 +16,12 @@ from statistics import median
 
 import requests
 from bs4 import BeautifulSoup
+from selenium import webdriver
 
 DB = os.environ.get("DB_PATH", "prices.db")
 ITEMS = os.environ.get("ITEMS_PATH", "items.json")
 EVENTS = os.environ.get("EVENTS_PATH", "events.json")
 NTFY = os.environ.get("NTFY_TOPIC")
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 WINDOW, MIN_DAYS, HIKE_DAYS = 90, 14, 30  # history compared against / needed to judge / "just before the sale"
 
 
@@ -158,31 +158,40 @@ def notify(msg):
 
 
 def scrape():
-    c, msgs = db(), []
     events = load(EVENTS) if os.path.exists(EVENTS) else []
-    for it in load(ITEMS):
-        p, shop = it["product"], it["shop"]
-        try:
-            r = requests.get(it["url"], headers={"User-Agent": UA, "Accept-Language": "en"}, timeout=30)
-            r.raise_for_status()
-            price = find_price(r.text, it.get("selector"))
-            if price is None:
-                raise ValueError("no price found, add a 'selector' to items.json")
-            was = find_price(r.text, it["was_selector"]) if it.get("was_selector") else None
-        except Exception as e:  # a silently broken scraper is worse than a noisy one
-            msgs.append(f"{p} @ {shop}: FAILED - {e}")
-            continue
-        last = c.execute("SELECT price FROM prices WHERE product=? AND shop=? ORDER BY rowid DESC LIMIT 1", (p, shop)).fetchone()
-        c.execute("INSERT INTO prices(product, shop, price, was) VALUES(?,?,?,?)", (p, shop, price, was))
-        if last and last[0] != price:
-            a = analyze(series(c, p, shop))
-            ev = event_name(events, datetime.now(timezone.utc).date())
-            msgs.append(f"{p} @ {shop}: {last[0]:g} -> {price:g}  [{a['verdict'].upper()}]" + (f" during {ev}" if ev else "")
-                        + "".join(f"\n- {x}" for x in a["reasons"]) + f"\n{it['url']}")
-    c.commit()
-    if msgs:
-        notify("\n\n".join(msgs))
+    items = load(ITEMS)
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
+    with webdriver.Chrome(options=options) as driver:
+        driver.set_page_load_timeout(30)
+        c, msgs = db(), []
+        for it in items:
+            p, shop = it["product"], it["shop"]
+            try:
+                driver.get(it["url"])
+                html = driver.page_source
+                price = find_price(html, it.get("selector"))
+                if price is None:
+                    raise ValueError("shop is blocking automated requests (bot-check page)" if len(html) < 20000
+                                     else "no price found, add a 'selector' to items.json")  # ponytail: size heuristic
+                was = find_price(html, it["was_selector"]) if it.get("was_selector") else None
+            except Exception as e:  # a silently broken scraper is worse than a noisy one
+                msgs.append(f"{p} @ {shop}: FAILED - {e}")
+                continue
+            last = c.execute("SELECT price FROM prices WHERE product=? AND shop=? ORDER BY rowid DESC LIMIT 1", (p, shop)).fetchone()
+            c.execute("INSERT INTO prices(product, shop, price, was) VALUES(?,?,?,?)", (p, shop, price, was))
+            if last and last[0] != price:
+                a = analyze(series(c, p, shop))
+                ev = event_name(events, datetime.now(timezone.utc).date())
+                msgs.append(f"{p} @ {shop}: {last[0]:g} -> {price:g}  [{a['verdict'].upper()}]" + (f" during {ev}" if ev else "")
+                            + "".join(f"\n- {x}" for x in a["reasons"]) + f"\n{it['url']}")
+        c.commit()
+        if msgs:
+            notify("\n\n".join(msgs))
 
 def report():
     c = db()

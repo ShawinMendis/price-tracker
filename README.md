@@ -14,7 +14,9 @@ dashboard to GitHub Pages. Free for a public repo.
    Install the ntfy app and subscribe to that topic.
 5. Actions tab > track > Run workflow. Dashboard URL shows in the run summary.
 
-Edit `events.json` to add sale events (Prime Day, Click Frenzy, EOFY...). Local run:
+Edit `events.json` to add sale events (Prime Day, Click Frenzy, EOFY...). Scraping uses headless
+Chrome, so install Chrome or Chromium for local runs; Selenium Manager locates or downloads the matching
+driver. Local run:
 `pip install -r requirements.txt && python tracker.py scrape && python tracker.py report && python -m http.server -d site`
 
 ## Notes
