@@ -1,0 +1,149 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Price Tracker</title>
+<style>
+:root{--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mut:#898781;--grid:#e1e0d9;--ring:rgba(11,11,11,.10);
+  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#6250d6;--s8:#e34948;
+  --good:#0ca30c;--serious:#ec835a;--crit:#d03b3b;--goodtxt:#006300;--badtxt:#d03b3b;--band:rgba(137,135,129,.18);color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--page:#0d0d0d;--surface:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#2c2c2a;--ring:rgba(255,255,255,.10);
+  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767;
+  --goodtxt:#0ca30c;--badtxt:#e66767;--band:rgba(137,135,129,.22);color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;padding:24px 16px 48px;background:var(--page);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:auto;display:grid;gap:28px}
+h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 10px}h3{font-size:15px;margin:0}
+.mut{color:var(--mut);font-size:13px}.ink2{color:var(--ink2)}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:10px;padding:16px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;font-weight:600;color:var(--ink2);font-size:12px;padding:6px 10px;border-bottom:1px solid var(--grid)}
+td{padding:8px 10px;border-top:1px solid var(--grid);vertical-align:top}
+tr.why td{border-top:0;padding-top:0;color:var(--ink2);font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.good{color:var(--goodtxt)}.bad{color:var(--badtxt)}
+.badge{display:inline-flex;gap:6px;align-items:center;font-weight:600;white-space:nowrap}
+.badge i{font-style:normal;font-weight:700}
+.chart{position:relative;height:300px;margin-top:10px}
+.stack{display:grid;gap:16px}
+a{color:inherit}
+</style>
+<main>
+  <header><h1>Price Tracker</h1><div id="updated" class="mut"></div></header>
+  <div id="app" class="mut">Loading...</div>
+  <section id="s-deals" hidden><h2>Right now</h2><div class="card scroll" id="deals"></div></section>
+  <section id="s-overview" hidden><h2>How far from the usual price</h2>
+    <div class="card"><div class="mut">Usual price = median of the last 90 days. Blue bars are cheaper than usual, red are dearer.</div>
+    <div class="chart" id="overview"></div></div></section>
+  <section id="s-products" hidden><h2>Price history</h2>
+    <div class="mut" style="margin-bottom:10px">Grey bands are sale events. Dashed = usual price now. Dotted red = the "was" price the shop advertises.</div>
+    <div class="stack" id="products"></div></section>
+  <section id="s-events" hidden><h2>Sale events: real discount or not?</h2><div class="stack" id="events"></div></section>
+  <footer class="mut">Needs 14 days of history before it judges anything. <b>Gimmick</b> = price raised just before the sale so the
+    "discount" only returns it to normal, an advertised "was" price that was never actually charged, or a claimed discount much bigger
+    than the real one. <b>Real deal</b> = at least 10% below usual and at the lowest price in the last 90 days.</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const css=getComputedStyle(document.documentElement),tok=n=>css.getPropertyValue(n).trim();
+Chart.defaults.animation=false;Chart.defaults.color=tok('--mut');Chart.defaults.borderColor=tok('--grid');
+Chart.defaults.font.family='system-ui,-apple-system,"Segoe UI",sans-serif';
+const fmt=n=>n==null?'-':(+n).toLocaleString(undefined,{maximumFractionDigits:2});
+const pct=x=>(x>0?'+':'')+Math.round(x*100)+'%';
+const BADGE={'real deal':['✓','--good'],decent:['↓','--good'],normal:['=','--mut'],pricey:['▲','--serious'],gimmick:['✕','--crit'],learning:['…','--mut']};
+const D1=864e5,t=d=>Date.parse(d+'T00:00:00Z'),iso=n=>new Date(n).toISOString().slice(0,10);
+const range=(a,b)=>{const o=[];for(let n=t(a);n<=t(b);n+=D1)o.push(iso(n));return o};
+const safeUrl=u=>/^https?:\/\//.test(u||'')?u:null;
+
+function badge(v,label=v){const [ic,col]=BADGE[v]||BADGE.learning,b=el('span','badge'),i=el('i',null,ic);i.style.color=`var(${col})`;b.append(i,label);return b}
+function shopCell(s){const td=el('td'),u=safeUrl(s.url);if(u){const a=el('a',null,s.shop);a.href=u;a.rel='noopener';td.append(a)}else td.textContent=s.shop;return td}
+function offCell(off){const td=el('td','num');if(off==null){td.textContent='-';return td}
+  td.textContent=pct(-off);if(off>=0.05)td.classList.add('good');else if(off<=-0.05)td.classList.add('bad');return td}
+
+function deals(D){
+  const rows=[...D.series].sort((a,b)=>(b.off??-9)-(a.off??-9)),tb=el('table'),h=el('tr');
+  [['Product'],['Shop'],['Price','num'],['Usual','num'],['vs usual','num'],['Verdict']].forEach(([x,c])=>h.append(el('th',c,x)));
+  tb.append(h);
+  rows.forEach(s=>{
+    const r=el('tr'),pr=el('td','num',fmt(s.price));
+    if(s.was)pr.append(' ',Object.assign(el('s','mut',fmt(s.was)),{title:'advertised "was" price'}));
+    const v=el('td');v.append(badge(s.verdict));
+    r.append(el('td',null,s.product),shopCell(s),pr,el('td','num',fmt(s.typical)),offCell(s.off),v);
+    const w=el('tr','why'),wt=el('td');wt.colSpan=6;s.reasons.forEach(x=>wt.append(el('div',null,x)));w.append(wt);
+    tb.append(r,w);
+  });
+  $('deals').append(tb);$('s-deals').hidden=false;
+}
+
+function overview(D){
+  const rows=D.series.filter(s=>s.off!=null).sort((a,b)=>b.off-a.off);
+  if(!rows.length)return;
+  const box=$('overview'),cv=el('canvas');box.style.height=(rows.length*34+70)+'px';box.append(cv);
+  new Chart(cv,{type:'bar',data:{
+    labels:rows.map(s=>`${s.product} · ${s.shop}`+(s.verdict==='gimmick'?'  ✕ gimmick':s.verdict==='real deal'?'  ✓ real deal':'')),
+    datasets:[{data:rows.map(s=>+(s.off*100).toFixed(1)),borderRadius:4,maxBarThickness:20,
+      backgroundColor:rows.map(s=>s.off>=0?tok('--s1'):tok('--s8'))}]},
+    options:{indexAxis:'y',maintainAspectRatio:false,
+      scales:{x:{title:{display:true,text:'% below usual price (negative = dearer)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false}}},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw>=0?`${c.raw}% below usual`:`${-c.raw}% above usual`}}}}});
+  $('s-overview').hidden=false;
+}
+
+const bands=ev=>({id:'bands',beforeDatasetsDraw(ch){
+  const {ctx,chartArea:a,scales:{x}}=ch,L=ch.data.labels,h=L.length>1?(x.getPixelForValue(1)-x.getPixelForValue(0))/2:0;
+  ev.forEach(e=>{
+    const i=L.findIndex(d=>d>=e.start),j=L.findLastIndex(d=>d<=e.end);if(i<0||j<i)return;
+    const x0=Math.max(x.getPixelForValue(i)-h,a.left),x1=Math.min(x.getPixelForValue(j)+h,a.right);
+    ctx.save();ctx.fillStyle=tok('--band');ctx.fillRect(x0,a.top,Math.max(x1-x0,2),a.bottom-a.top);
+    ctx.fillStyle=tok('--ink2');ctx.font='11px system-ui';ctx.fillText(e.name,x0+3,a.top+12);ctx.restore();
+  });
+}});
+
+function products(D){
+  const by={};D.series.forEach(s=>(by[s.product]??=[]).push(s));
+  Object.entries(by).forEach(([name,list])=>{
+    const card=el('div','card'),cheap=[...list].sort((a,b)=>a.price-b.price)[0];
+    card.append(el('h3',null,name));
+    card.append(el('div','mut',list.length>1?`Cheapest now: ${cheap.shop} at ${fmt(cheap.price)}`:`${list[0].shop}, now ${fmt(list[0].price)}`));
+    const all=list.flatMap(s=>s.points.map(p=>p[0])).sort(),labels=range(all[0],all.at(-1)),ds=[];
+    list.slice(0,8).forEach((s,i)=>{
+      const col=tok('--s'+(i+1));
+      const m=new Map(s.points.map(p=>[p[0],p[1]])),w=new Map(s.points.filter(p=>p[2]!=null).map(p=>[p[0],p[2]]));
+      ds.push({label:s.shop,data:labels.map(d=>m.get(d)??null),borderColor:col,backgroundColor:col,borderWidth:2,pointRadius:0,pointHoverRadius:5,stepped:true,spanGaps:true});
+      if(s.typical!=null)ds.push({label:s.shop+' usual',data:labels.map(()=>s.typical),borderColor:col,borderWidth:1,borderDash:[6,4],pointRadius:0,pointHoverRadius:0});
+      if(w.size)ds.push({label:s.shop+' "was" price',data:labels.map(d=>w.get(d)??null),borderColor:tok('--crit'),borderWidth:1.5,borderDash:[2,3],pointRadius:3,pointHoverRadius:5,stepped:true,spanGaps:true});
+    });
+    const hi=Math.max(...ds.flatMap(d=>d.data).filter(v=>v!=null));  // keep a 1% dip looking like 1%
+    const box=el('div','chart'),cv=el('canvas');box.append(cv);card.append(box);$('products').append(card);
+    new Chart(cv,{type:'line',data:{labels,datasets:ds},plugins:[bands(D.events)],
+      options:{maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        scales:{x:{grid:{display:false},ticks:{maxTicksLimit:8,maxRotation:0}},y:{suggestedMin:hi*0.75,ticks:{callback:v=>fmt(v)}}},
+        plugins:{legend:{labels:{boxWidth:18,boxHeight:2}},tooltip:{filter:i=>i.raw!=null}}}});
+  });
+  $('s-products').hidden=false;
+}
+
+function events(D){
+  const today=iso(Date.now()),box=$('events'),next=D.events.filter(e=>e.start>today).sort((a,b)=>a.start.localeCompare(b.start))[0];
+  D.events.filter(e=>e.results.length).forEach(e=>{
+    const card=el('div','card scroll'),tb=el('table'),h=el('tr');
+    card.append(el('h3',null,`${e.name} (${e.start}${e.end!==e.start?' to '+e.end:''})`));
+    [['Product'],['Shop'],['Usual before','num'],['Best during','num'],['Change','num'],['Verdict']].forEach(([x,c])=>h.append(el('th',c,x)));tb.append(h);
+    e.results.forEach(r=>{
+      const v=el('td');v.append(r.off>=0.10?badge('real deal','real discount'):r.off>0.02?badge('decent','small discount'):badge('gimmick','no real discount'));
+      const tr=el('tr');tr.append(el('td',null,r.product),el('td',null,r.shop),el('td','num',fmt(r.typical)),el('td','num',fmt(r.best)),offCell(r.off),v);tb.append(tr);
+    });
+    card.append(tb);box.append(card);
+  });
+  if(next){const n=Math.round((t(next.start)-t(today))/D1);box.append(el('div','mut',`Next event: ${next.name} starts ${next.start} (in ${n} days). Prices recorded before then are the baseline it gets judged against.`))}
+  if(box.children.length)$('s-events').hidden=false;
+}
+
+fetch('data.json').then(r=>r.json()).then(D=>{
+  $('updated').textContent='Updated '+D.generated.slice(0,16).replace('T',' ')+' UTC';
+  if(!D.series.length){$('app').textContent='No data yet. The first scheduled run fills this in.';return}
+  $('app').remove();deals(D);overview(D);products(D);events(D);
+}).catch(e=>{$('app').textContent='Could not load data.json: '+e.message});
+</script>

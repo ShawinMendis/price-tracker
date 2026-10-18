@@ -1,0 +1,5 @@
+[
+  {"product": "Example headphones", "shop": "Shop A", "url": "https://example.com/product/123"},
+  {"product": "Example headphones", "shop": "Shop B", "url": "https://example.org/p/456",
+   "selector": ".price-now", "was_selector": ".price-was"}
+]
